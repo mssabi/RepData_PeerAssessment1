@@ -1,72 +1,113 @@
-## ----loaddata------------------------------------------------------------
-unzip(zipfile="activity.zip")
-data <- read.csv("activity.csv")
-
-
-## ------------------------------------------------------------------------
-library(ggplot2)
-total.steps <- tapply(data$steps, data$date, FUN=sum, na.rm=TRUE)
-qplot(total.steps, binwidth=1000, xlab="total number of steps taken each day")
-mean(total.steps, na.rm=TRUE)
-median(total.steps, na.rm=TRUE)
-
-
-## ------------------------------------------------------------------------
-library(ggplot2)
-averages <- aggregate(x=list(steps=data$steps), by=list(interval=data$interval),
-                      FUN=mean, na.rm=TRUE)
-ggplot(data=averages, aes(x=interval, y=steps)) +
-    geom_line() +
-    xlab("5-minute interval") +
-    ylab("average number of steps taken")
-
-
-## ------------------------------------------------------------------------
-averages[which.max(averages$steps),]
-
-
-## ----how_many_missing----------------------------------------------------
-missing <- is.na(data$steps)
-# How many missing
-table(missing)
-
-
-## ------------------------------------------------------------------------
-# Replace each missing value with the mean value of its 5-minute interval
-fill.value <- function(steps, interval) {
-    filled <- NA
-    if (!is.na(steps))
-        filled <- c(steps)
-    else
-        filled <- (averages[averages$interval==interval, "steps"])
-    return(filled)
+#removes all variables from environment
+rm(list=ls(all=TRUE))
+dat = read.csv('activity.csv', header = T)
+names(dat)
+str(dat)
+head(dat)
+library(data.table)
+dat_tbl = data.table(dat)
+dat_tbl_summary = dat_tbl[, list(total_steps = sum(steps, na.rm = T)), 
+                          by = date]
+#Making The Generation of This Plot Into A Function So I Can Re-use Later
+gen_hist = function(x, title){
+        hist(x, 
+             breaks = 20,
+             main = title,
+             xlab = 'Total Number of Steps', col = 'grey',
+            
+             cex.main = .9)
+        
+#calculate mean and median
+        mean_value = round(mean(x), 1)
+        median_value = round(median(x), 1)
+        
+        #place lines for mean and median on histogram
+        abline(v=mean_value, lwd = 3, col = 'blue')
+        abline(v=median_value, lwd = 3, col = 'red')
+        
+        #create legend
+        legend('topright', lty = 1, lwd = 3, col = c("blue", "red"),
+               cex = .8, 
+               legend = c(paste('Mean: ', mean_value),
+               paste('Median: ', median_value))
+               )
 }
-filled.data <- data
-filled.data$steps <- mapply(fill.value, filled.data$steps, filled.data$interval)
+
+gen_hist(dat_tbl_summary$total_steps, 'Number of Steps Taken Per Day')
+#summarize dataset by interval
+dat_tbl_summary_intv = dat_tbl[, list(avg_steps = mean(steps, na.rm = T)), 
+                          by = interval]
+#plot the time series
+with(dat_tbl_summary_intv, {
+        plot(interval, avg_steps, type = 'l',
+             main = 'Average Steps by Time Interval',
+             xlab = '5 Minute Time Interval',
+             ylab = 'Average Number of Steps')
+        })
+#Find Interval That Has The Maximum Avg Steps
+max_steps = dat_tbl_summary_intv[which.max(avg_steps), ]
+
+#Generate Label String
+max_lab = paste('Maximum Of ', round(max_steps$avg_steps, 1), ' Steps \n On ', max_steps$interval, 'th Time Interval', sep = '')
+
+#Collect Cooridinates of The Max Interval For Graphing
+points(max_steps$interval,  max_steps$avg_steps, col = 'red', lwd = 3, pch = 19)
+
+#Add Label To Annotate Maximum # Steps And Interval
+legend("topright",
+       legend = max_lab,
+       text.col = 'red',
+       bty = 'n'
+       )
+sum(is.na(dat$steps))
+#First I will join the dataframe I created earlier that summarizes the average number of steps per interval to the original dataset
+setkey(dat_tbl, interval)
+setkey(dat_tbl_summary_intv, interval)
 
 
-## ------------------------------------------------------------------------
-total.steps <- tapply(filled.data$steps, filled.data$date, FUN=sum)
-qplot(total.steps, binwidth=1000, xlab="total number of steps taken each day")
-mean(total.steps)
-median(total.steps)
-
-
-## ------------------------------------------------------------------------
-weekday.or.weekend <- function(date) {
-    day <- weekdays(date)
-    if (day %in% c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"))
-        return("weekday")
-    else if (day %in% c("Saturday", "Sunday"))
-        return("weekend")
-    else
-        stop("invalid date")
+#Create function that will return the second value if the first value is NA
+NA_replace = function(x,y){
+        if(is.na(x)){
+                
+                return(y)
+        }
+        return(x)
 }
-filled.data$date <- as.Date(filled.data$date)
-filled.data$day <- sapply(filled.data$date, FUN=weekday.or.weekend)
+#create new dataset that replaces NAs with average values
+dat_tbl_miss = dat_tbl[dat_tbl_summary_intv]
+dat_tbl_miss$new_steps = mapply(NA_replace,dat_tbl_miss$steps, dat_tbl_miss$avg_steps)
 
+#summaryize new dataset by day
+dat_tbl_summary_miss = dat_tbl_miss[, list(new_steps = sum(new_steps, na.rm = T)), 
+                          by = date]
+#preview new dataset
+head(dat_tbl_summary_miss)
+gen_hist(dat_tbl_summary$total_steps, 'Missing Values Removed')
+gen_hist(dat_tbl_summary_miss$new_steps, 'Missing Values Replaced With \n Mean For Interval')
+#Make Function To Return Either "Weekday" or "Weekend"
+weekpart = function(x){
+        if(x %in% c('Saturday', 'Sunday')){
+                return('Weekend')
+        }
+        
+        return('Weekday')
+}
 
-## ------------------------------------------------------------------------
-averages <- aggregate(steps ~ interval + day, data=filled.data, mean)
-ggplot(averages, aes(interval, steps)) + geom_line() + facet_grid(day ~ .) +
-xlab("5-minute interval") + ylab("Number of steps")
+#Add Name of Week
+dat_tbl_miss$dayname = weekdays(as.Date(dat_tbl_miss$date))
+
+#Add Factor Variable To Differentiate Weekday and Weekend
+dat_tbl_miss$daytype = as.factor(apply(as.matrix(dat_tbl_miss$dayname), 1, weekpart))
+
+#Summarize Dataset: Mean grouped by interval and daytype
+dat_tbl_summary_miss = dat_tbl_miss[, list(avg_steps = mean(new_steps, na.rm = T)), 
+                          by = list(interval, daytype)]
+
+#inspect dataset
+str(dat_tbl_summary_miss)
+library(lattice)
+xyplot(avg_steps~interval | daytype, data = dat_tbl_summary_miss,
+      type = 'l',	
+      xlab = 'Interval',
+      ylab = 'Number of Steps',
+      layout = c(1,2))
